@@ -1,10 +1,10 @@
 gamescope.config.known_displays.hp_x27q = {
     pretty_name = "HP X27q",
     colorimetry = {
-        r = { x = 0.706, y = 0.329 },
-        g = { x = 0.301, y = 0.627 },
-        b = { x = 0.133, y = 0.033 },
-        w = { x = 0.317, y = 0.333 },
+        r = { x = 0.6855, y = 0.3085 },
+        g = { x = 0.2646, y = 0.6679 },
+        b = { x = 0.1503, y = 0.0576 },
+        w = { x = 0.3177, y = 0.3343 },
     },
     matches = function(display)
         local lcd_types = {

@@ -24,7 +24,7 @@ class ColorTransformer(ABC):
 
 
 class GammaScaleTransform(ColorTransformer):
-    """Transform with gamma and scale/"""
+    """Transform with gamma and scale."""
 
     def __init__(self, gain: np.ndarray, gamma: np.ndarray,
                  offset: np.ndarray) -> None:
@@ -39,7 +39,7 @@ class GammaScaleTransform(ColorTransformer):
 
 
 class ColorimetryLayer(layers.Layer):
-    """Colorimetry Keras Layer"""
+    """Colorimetry Keras Layer."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -61,6 +61,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("input_file",
                         help="Input profile",
                         type=str)
+    parser.add_argument("--disable-gamma",
+                        default=False,
+                        action="store_true",
+                        help="Disable loading gamma correction")
     return parser.parse_args()
 
 
@@ -100,7 +104,7 @@ def parse_icc_tags(prof_data: bytes) -> dict:
     return result
 
 
-def parse_vcgt(vcgt: bytes) -> ColorTransformer:
+def parse_vcgt(vcgt: bytes, disable_gamma: bool = False) -> ColorTransformer:
     """Parse VCGT section."""
     assert vcgt[:12] == b"vcgt\0\0\0\0\0\0\0\1"
     gains = []
@@ -111,10 +115,15 @@ def parse_vcgt(vcgt: bytes) -> ColorTransformer:
         gains.append(gain)
         offsets.append(offset)
         gammas.append(gamma)
+    gains = np.array(gains) / 65536
+    gammas = np.array(gammas) / 65535
+    offsets = np.array(offsets) / 65535
+    if disable_gamma:
+        gammas = np.ones_like(gammas)
     return GammaScaleTransform(
-        gain=np.array(gains) / 65536,
-        gamma=np.array(gammas) / 65535,
-        offset=np.array(offsets) / 65535
+        gain=gains,
+        gamma=gammas,
+        offset=offsets,
     )
 
 
@@ -153,9 +162,12 @@ def compute_colorimetry(transformer: ColorTransformer) -> list:
             yield tf.linalg.matvec(REC709_MAT, input_val), output_val
 
     def val_generator():
-        input_vals = np.arange(0.0, 1.0, step=0.01)
+        input_vals = np.arange(0.0, 1.0, step=0.001)
         input_vals = np.tile(input_vals, 3).T.astype(np.float32)
         input_vals = input_vals.reshape(-1, 1, 3)
+        random_vals = np.random.uniform(0.0, 1.0, size=(1000, 1, 3))
+        random_vals = random_vals.astype(np.float32)
+        input_vals = np.concatenate([input_vals, random_vals], axis=0)
         output_vals = transformer.transform(input_vals)
         return tf.linalg.matvec(REC709_MAT, input_vals), output_vals
 
@@ -167,7 +179,7 @@ def compute_colorimetry(transformer: ColorTransformer) -> list:
     dataset = dataset.batch(16)
 
     val_dataset = tf.data.Dataset.from_tensors(val_generator())
-    val_dataset.unbatch().batch(10)
+    val_dataset.unbatch().batch(20)
 
     model = keras.models.Sequential([ColorimetryLayer(name="colorimetry")])
     model.compile(optimizer="adam", loss="mse")
@@ -184,7 +196,7 @@ def compute_colorimetry(transformer: ColorTransformer) -> list:
             [colorimetry_layer.weights[1].numpy().tolist()])
 
 
-def main(input_file: str) -> int:
+def main(input_file: str, disable_gamma: bool = False) -> int:
     """Main function."""
 
     with open(input_file, "rb") as f:
@@ -197,7 +209,7 @@ def main(input_file: str) -> int:
     if vcgt is None:
         print("Profile does not have VCGT")
         return 1
-    transformer = parse_vcgt(vcgt)
+    transformer = parse_vcgt(vcgt, disable_gamma=disable_gamma)
     colorimetry = compute_colorimetry(transformer)
     print(colorimetry)
     rgb_to_xyz = compute_xyz_matrix(colorimetry[:8])
@@ -208,14 +220,14 @@ def main(input_file: str) -> int:
     out_gt = transformer.transform(col)
     out_test = (transform_mat @ col.T).T
     plt.figure()
-    plt.plot(col, out_gt[:, 0], "r")
-    plt.plot(col, out_gt[:, 1], "g")
-    plt.plot(col, out_gt[:, 2], "b")
+    plt.plot(x, out_gt[:, 0], "r")
+    plt.plot(x, out_gt[:, 1], "g")
+    plt.plot(x, out_gt[:, 2], "b")
     plt.savefig("out_icc.png")
     plt.figure()
-    plt.plot(col, out_test[:, 0], "r")
-    plt.plot(col, out_test[:, 1], "g")
-    plt.plot(col, out_test[:, 2], "b")
+    plt.plot(x, out_test[:, 0], "r")
+    plt.plot(x, out_test[:, 1], "g")
+    plt.plot(x, out_test[:, 2], "b")
     plt.savefig("out_colorimetry.png")
     return 0
 
